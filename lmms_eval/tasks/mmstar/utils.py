@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import re
 import string
 from collections import defaultdict
 
@@ -20,6 +21,16 @@ eval_type_dict = {
 
 
 replace_prompt = " Please answer yes or no."
+
+# 345 of the 1500 MMStar questions are taken from MathVista and still carry its
+# own answer-format instruction: "Hint: Please answer the question and provide
+# the correct option letter, e.g., A, B, C, D, at the end." That contradicts the
+# post_prompt this task appends, which asks for the letter directly, and exact_match
+# accepts nothing but a letter. Three of those items are worse: their hint asks for
+# a bare number ("provide the final value, e.g., 1.23"), which can never score,
+# because the gold answer is an option letter. Drop the inherited instruction
+# before appending ours, the same way replace_prompt is dropped below.
+_INHERITED_FORMAT_HINT = re.compile(r"^Hint: Please answer the question[^\n]*at the end\.\n")
 
 
 def mmstar_doc_to_visual(doc):
@@ -47,6 +58,8 @@ def mmstar_oc_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
     question = doc["question"]
     question = question.replace("<image 1>", "")
+    if post_prompt:
+        question = _INHERITED_FORMAT_HINT.sub("", question.lstrip())
     options = {cand: doc[cand] for cand in string.ascii_uppercase if cand in doc}
 
     options_prompt = "Options:\n"
@@ -62,6 +75,9 @@ def mmstar_oc_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
 def mmstar_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     question = doc["question"].strip()
+    # Strip before pre_prompt runs, so the "Question: " prefix cannot break the anchor.
+    if lmms_eval_specific_kwargs.get("post_prompt", ""):
+        question = _INHERITED_FORMAT_HINT.sub("", question)
     if "pre_prompt" in lmms_eval_specific_kwargs and lmms_eval_specific_kwargs["pre_prompt"] != "":
         question = question.replace(replace_prompt, "")
         question = f"{lmms_eval_specific_kwargs['pre_prompt']}{question}"
